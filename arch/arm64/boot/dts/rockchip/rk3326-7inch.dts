@@ -1,0 +1,193 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
+ */
+
+/dts-v1/;
+#include "rk3326-7inch.dtsi"
+
+/ {
+	model = "Rockchip rk3326 863 rkisp1 board";
+	compatible = "rockchip,rk3326-863-lp3-v10-rkisp1", "rockchip,rk3326";
+};
+
+&chosen {
+	bootargs_ext = "androidboot.boot_devices=ff390000.dwmmc,ff3b0000.nandc";
+};
+
+&i2c2 {
+	status = "okay";
+   clock-frequency = <100000>;
+	gc02m2: gc02m2@10 {
+		status = "okay";
+		compatible = "galaxycore,gc02m2";
+		reg = <0x10>;
+		//pinctrl-names = "default";
+		//pinctrl-0 = <&cif_clkout_m0>;
+
+		clocks = <&cru SCLK_CIF_OUT>;
+		clock-names = "xvclk";
+
+		avdd-supply = <&vcc2v8_dvp>;
+		dvdd-supply = <&vdd1v5_dvp>;
+		dovdd-supply = <&vcc1v8_dvp>;
+		pwdn-gpios = <&gpio2 13 GPIO_ACTIVE_HIGH>;
+		rockchip,camera-module-index = <0>;
+		rockchip,camera-module-facing = "back";
+			rockchip,camera-module-name = "CameraKing";
+		rockchip,camera-module-lens-name = "Largan";
+		port {
+			gc02m2_out: endpoint {
+				remote-endpoint = <&mipi_in>;
+				data-lanes = <1>;
+			};
+		};
+	};
+	
+		gc02m2b: gc02m2b@10 {
+		status = "okay";
+		compatible = "galaxycore,gc02m2b";
+		reg = <0x10>;
+		//pinctrl-names = "default";
+		//pinctrl-0 = <&cif_clkout_m0>;
+
+		clocks = <&cru SCLK_CIF_OUT>;
+		clock-names = "xvclk";
+
+		avdd-supply = <&vcc2v8_dvp>;
+		dvdd-supply = <&vdd1v5_dvp>;
+		dovdd-supply = <&vcc1v8_dvp>;
+		pwdn-gpios = <&gpio2 14 GPIO_ACTIVE_HIGH>;
+		rockchip,camera-module-index = <1>;
+		rockchip,camera-module-facing = "front";
+		rockchip,camera-module-name = "CameraKing";
+		rockchip,camera-module-lens-name = "Largan";
+		port {
+			gc02m2_out1: endpoint {
+				remote-endpoint = <&mipi_in1>;
+				data-lanes = <1>;
+			};
+		};
+	};
+	 gc2385: gc2385@37 {
+		status = "okay";
+		compatible = "galaxycore,gc2385";
+		reg = <0x37>;
+		//pinctrl-names = "default";
+		//pinctrl-0 = <&cif_clkout_m0>;
+
+		clocks = <&cru SCLK_CIF_OUT>;
+		clock-names = "xvclk";
+
+		avdd-supply = <&vcc2v8_dvp>;
+		dvdd-supply = <&vdd1v5_dvp>;
+		dovdd-supply = <&vcc1v8_dvp>;
+		pwdn-gpios = <&gpio2 13 GPIO_ACTIVE_HIGH>;
+		rockchip,camera-module-index = <0>;
+		rockchip,camera-module-facing = "back";
+		rockchip,camera-module-name = "CMK-CL4154-FG3";
+		rockchip,camera-module-lens-name = "TL0534-2";//
+		//gc2385_CMK-CL4154-FG3_TL0534-2
+		port {
+			gc2385_out: endpoint {
+				remote-endpoint = <&mipi_in2>;
+				data-lanes = <1>;
+			};
+		};
+	};
+	
+		gc2385b: gc2385b@37 {
+		status = "okay";
+		compatible = "galaxycore,gc2385b";
+		reg = <0x37>;
+		//pinctrl-names = "default";
+		//pinctrl-0 = <&cif_clkout_m0>;
+
+		clocks = <&cru SCLK_CIF_OUT>;
+		clock-names = "xvclk";
+
+		avdd-supply = <&vcc2v8_dvp>;
+		dvdd-supply = <&vdd1v5_dvp>;
+		dovdd-supply = <&vcc1v8_dvp>;
+		pwdn-gpios = <&gpio2 14 GPIO_ACTIVE_HIGH>;
+		rockchip,camera-module-index = <1>;
+		rockchip,camera-module-facing = "front";
+		rockchip,camera-module-name = "pcg301139-a0";
+		rockchip,camera-module-lens-name = "m286";
+		port {
+			gc2385_out1: endpoint {
+				remote-endpoint = <&mipi_in3>;
+				data-lanes = <1>;
+			};
+		};
+	};
+};
+
+&isp_mmu {
+	status = "okay";
+};
+&mipi_dphy_rx0 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			mipi_in: endpoint@0 {
+				reg = <0>;
+				remote-endpoint = <&gc02m2_out>;
+				data-lanes = <1>;
+			};
+			
+			mipi_in1: endpoint@1 {
+				reg = <1>;
+				remote-endpoint = <&gc02m2_out1>;
+				data-lanes = <1>;
+			};
+		mipi_in2: endpoint@2 {
+				reg = <0>;
+				remote-endpoint = <&gc2385_out>;
+				data-lanes = <1>;
+			};
+			
+			mipi_in3: endpoint@3 {
+				reg = <1>;
+				remote-endpoint = <&gc2385_out1>;
+				data-lanes = <1>;
+			};			
+		};
+
+		port@1 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			dphy_rx_out: endpoint@0 {
+				reg = <0>;
+				remote-endpoint = <&isp_mipi_in>;
+			};
+		};
+	};
+};
+
+&rkisp1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&cif_clkout_m0>;
+
+	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+			isp_mipi_in: endpoint@0 {
+				reg = <0>;
+				remote-endpoint = <&dphy_rx_out>;
+			};
+
+	};
+};

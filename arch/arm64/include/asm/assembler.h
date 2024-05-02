@@ -152,6 +152,14 @@
 	.endm
 
 /*
+ * Speculation barrier
+ */
+	.macro	sb
+	dsb	nsh
+	isb
+	.endm
+
+/*
  * NOP sequence
  */
 	.macro	nops, num
