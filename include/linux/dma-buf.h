@@ -146,7 +146,12 @@ struct dma_buf_ops {
 	/* TODO: Add try_map_dma_buf version, to return immed with -EBUSY
 	 * if the call would block.
 	 */
-
+#ifdef CONFIG_ARCH_ROCKCHIP
+	int (*set_release_callback)(void (*release_callback)(void *data),
+				    void *data);
+	void *(*get_release_callback_data)(void *callback);
+	/* after final dma_buf_put() */
+#endif
 	/**
 	 * @release:
 	 *
@@ -410,6 +415,7 @@ typedef int (*dma_buf_destructor)(struct dma_buf *dmabuf, void *dtor_data);
  * @exp_name: name of the exporter; useful for debugging.
  * @name: userspace-provided name; useful for accounting and debugging.
  * @name_lock: lock to protect name.
+ * @ktime: time (in jiffies) at which the buffer was born
  * @owner: pointer to exporter module; used for refcounting when exporter is a
  *         kernel module.
  * @list_node: node for dma_buf accounting and debugging.
@@ -432,6 +438,10 @@ struct dma_buf {
 	size_t size;
 	struct file *file;
 	struct list_head attachments;
+#ifdef CONFIG_ARCH_ROCKCHIP
+	struct list_head release_callbacks;
+	struct mutex release_lock;
+#endif
 	const struct dma_buf_ops *ops;
 	struct mutex lock;
 	unsigned vmapping_counter;
@@ -439,6 +449,9 @@ struct dma_buf {
 	const char *exp_name;
 	const char *name;
 	spinlock_t name_lock;
+#if defined(CONFIG_DEBUG_FS)
+	ktime_t ktime;
+#endif
 	struct module *owner;
 	struct list_head list_node;
 	void *priv;
@@ -531,6 +544,14 @@ static inline void get_dma_buf(struct dma_buf *dmabuf)
 {
 	get_file(dmabuf->file);
 }
+
+#ifdef CONFIG_ARCH_ROCKCHIP
+int dma_buf_set_release_callback(struct dma_buf *dmabuf,
+				 void (*callback)(void *), void *data);
+
+void *dma_buf_get_release_callback_data(struct dma_buf *dmabuf,
+					void (*callback)(void *));
+#endif
 
 struct dma_buf_attachment *dma_buf_attach(struct dma_buf *dmabuf,
 							struct device *dev);

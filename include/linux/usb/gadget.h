@@ -62,6 +62,8 @@ struct usb_ep;
  *	invalidated by the error may first be dequeued.
  * @context: For use by the completion callback
  * @list: For use by the gadget driver.
+ * @frame_number: Reports the interval number in (micro)frame in which the
+ *	isochronous transfer was transmitted or received.
  * @status: Reports completion code, zero or a negative errno.
  *	Normally, faults block the transfer queue from advancing until
  *	the completion callback returns.
@@ -113,6 +115,8 @@ struct usb_request {
 					struct usb_request *req);
 	void			*context;
 	struct list_head	list;
+
+	unsigned		frame_number;		/* ISO ONLY */
 
 	int			status;
 	unsigned		actual;
@@ -274,6 +278,7 @@ enum ep_type {
  * @ep_intr_num: Interrupter number for EP.
  * @endless: In case where endless transfer is being initiated, this is set
  *      to disable usb event interrupt for few events.
+ * @transfer_type: Used to specify transfer type of EP.
  *
  * the bus controller driver lists all the general purpose endpoints in
  * gadget->ep_list.  the control endpoint (gadget->ep0) is not in that list,
@@ -301,6 +306,9 @@ struct usb_ep {
 	u8                      ep_num;
 	u8                      ep_intr_num;
 	bool                    endless;
+#ifdef CONFIG_ARCH_ROCKCHIP
+	u8			transfer_type;
+#endif
 };
 
 /*-------------------------------------------------------------------------*/
@@ -444,6 +452,7 @@ struct usb_gadget_ops {
  *	indicates that it supports LPM as per the LPM ECN & errata.
  * @remote_wakeup: Indicates if the host has enabled the remote_wakeup
  * feature.
+ * @uvc_enabled: True if uvc function is enabled.
  *
  * Gadgets have a mostly-portable "gadget driver" implementing device
  * functions, handling all usb configurations and interfaces.  Gadget
@@ -499,6 +508,7 @@ struct usb_gadget {
 	unsigned			connected:1;
 	unsigned			lpm_capable:1;
 	unsigned			remote_wakeup:1;
+	unsigned			uvc_enabled:1;
 
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
