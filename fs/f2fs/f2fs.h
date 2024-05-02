@@ -71,6 +71,8 @@ extern const char *f2fs_fault_name[FAULT_MAX];
 #define IS_FAULT_SET(fi, type) ((fi)->inject_type & (1 << (type)))
 #endif
 
+#define MIN_ROOT_RESERVED_BLOCKS (128 * 1024 * 1024U)
+
 /*
  * For mount options
  */
@@ -1528,6 +1530,8 @@ struct f2fs_sb_info {
 	unsigned int max_victim_search;
 	/* migration granularity of garbage collection, unit: segment */
 	unsigned int migration_granularity;
+
+	atomic_t no_cp_fsync_pages;
 
 	/*
 	 * for stat information.

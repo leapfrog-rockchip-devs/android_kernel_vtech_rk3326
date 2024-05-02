@@ -267,7 +267,8 @@ static inline void limit_reserve_root(struct f2fs_sb_info *sbi)
 	block_t limit = min((sbi->user_block_count << 1) / 1000,
 			sbi->user_block_count - sbi->reserved_blocks);
 
-	/* limit is 0.2% */
+	/* limit is 0.2%, and cannot be too small */
+	limit = max(limit, MIN_ROOT_RESERVED_BLOCKS);
 	if (test_opt(sbi, RESERVE_ROOT) &&
 			F2FS_OPTION(sbi).root_reserved_blocks > limit) {
 		F2FS_OPTION(sbi).root_reserved_blocks = limit;
@@ -1296,6 +1297,7 @@ int f2fs_sync_fs(struct super_block *sb, int sync)
 
 		cpc.reason = __get_cp_reason(sbi);
 
+		atomic_set(&sbi->no_cp_fsync_pages, 0);
 		down_write(&sbi->gc_lock);
 		err = f2fs_write_checkpoint(sbi, &cpc);
 		up_write(&sbi->gc_lock);
@@ -1384,7 +1386,8 @@ static int f2fs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_type = F2FS_SUPER_MAGIC;
 	buf->f_bsize = sbi->blocksize;
 
-	buf->f_blocks = total_count - start_count;
+	/* f_blocks should not include overhead of filesystem */
+	buf->f_blocks = user_block_count;
 	buf->f_bfree = user_block_count - valid_user_blocks(sbi) -
 						sbi->current_reserved_blocks;
 
@@ -3668,6 +3671,8 @@ try_onemore:
 			le64_to_cpu(seg_i->journal->info.kbytes_written);
 
 	f2fs_build_gc_manager(sbi);
+
+	atomic_set(&sbi->no_cp_fsync_pages, 0);
 
 	err = f2fs_build_stats(sbi);
 	if (err)
