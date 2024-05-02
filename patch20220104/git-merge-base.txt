@@ -1,0 +1,18 @@
+remote url:
+29	ssh://10.10.10.29:29418/rk/kernel (fetch)
+29	ssh://10.10.10.29:29418/rk/kernel (push)
+rk29	ssh://git@10.10.10.78:2222/Android_Qt/rk/kernel (fetch)
+rk29	ssh://git@10.10.10.78:2222/Android_Qt/rk/kernel (push)
+remote branch:
+  29/develop-4.19
+  29/develop-4.19-px30s
+  m/master -> android-10.0-mid-rkr14
+  rk29/develop-4.19
+commit 2ed15814a0c5436245199957f043e0b5a185482b
+Author: Yu Qiaowei <cerf.yu@rock-chips.com>
+Date:   Thu Aug 26 15:48:18 2021 +0800
+
+    video/rockchip: rga2: Fix the misconfiguration of srcover's globalalpha
+    
+    Signed-off-by: Yu Qiaowei <cerf.yu@rock-chips.com>
+    Change-Id: I547ce7a8938a37ac96223f7435b94ec839b3ceba

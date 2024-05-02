@@ -320,6 +320,22 @@ include scripts/subarch.include
 # Default value for CROSS_COMPILE is not to prefix executables
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
 ARCH		?= $(SUBARCH)
+ifeq ($(ARCH),arm64)
+ifneq ($(wildcard $(srctree)/../prebuilts/gcc/linux-x86/aarch64/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu),)
+CROSS_COMPILE	?= $(srctree)/../prebuilts/gcc/linux-x86/aarch64/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
+endif
+ifneq ($(wildcard $(srctree)/../prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9),)
+CROSS_COMPILE	?= $(srctree)/../prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+endif
+endif
+ifeq ($(ARCH),arm)
+ifneq ($(wildcard $(srctree)/../prebuilts/gcc/linux-x86/arm/gcc-linaro-6.3.1-2017.05-x86_64_arm-linux-gnueabihf),)
+CROSS_COMPILE	?= $(srctree)/../prebuilts/gcc/linux-x86/arm/gcc-linaro-6.3.1-2017.05-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
+endif
+ifneq ($(wildcard $(srctree)/../prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9),)
+CROSS_COMPILE	?= $(srctree)/../prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin/arm-linux-androidkernel-
+endif
+endif
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
@@ -406,6 +422,14 @@ PYTHON		= python
 PYTHON2		= python2
 PYTHON3		= python3
 CHECK		= sparse
+
+# Use the wrapper for the compiler. This wrapper scans for new
+# warnings and causes the build to stop upon encountering them.
+ifeq ($(CC),$(CROSS_COMPILE)gcc)
+ifneq ($(wildcard $(srctree)/scripts/gcc-wrapper.py),)
+CC		= $(srctree)/scripts/gcc-wrapper.py $(CROSS_COMPILE)gcc
+endif
+endif
 
 CHECKFLAGS     := -D__linux__ -Dlinux -D__STDC__ -Dunix -D__unix__ \
 		  -Wbitwise -Wno-return-void -Wno-unknown-attribute $(CF)
@@ -693,7 +717,7 @@ KBUILD_CFLAGS	+= $(call cc-option,--param=allow-store-data-races=0)
 KBUILD_CFLAGS	+= $(call cc-option,-fno-allow-store-data-races)
 
 # check for 'asm goto'
-ifeq ($(call shell-cached,$(CONFIG_SHELL) $(srctree)/scripts/gcc-goto.sh $(CC) $(KBUILD_CFLAGS)), y)
+ifeq ($(shell $(CONFIG_SHELL) $(srctree)/scripts/gcc-goto.sh $(CC) $(KBUILD_CFLAGS)), y)
 	KBUILD_CFLAGS += -DCC_HAVE_ASM_GOTO
 	KBUILD_AFLAGS += -DCC_HAVE_ASM_GOTO
 endif

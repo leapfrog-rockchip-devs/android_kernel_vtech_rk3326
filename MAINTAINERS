@@ -14152,7 +14152,9 @@ F:	drivers/clk/clk-sc[mp]i.c
 F:	drivers/cpufreq/sc[mp]i-cpufreq.c
 F:	drivers/firmware/arm_scpi.c
 F:	drivers/firmware/arm_scmi/
+F:	drivers/reset/reset-scmi.c
 F:	include/linux/sc[mp]i_protocol.h
+F:	include/trace/events/scmi.h
 
 SYSTEM RESET/SHUTDOWN DRIVERS
 M:	Sebastian Reichel <sre@kernel.org>
@@ -15332,6 +15334,12 @@ F:	Documentation/ABI/testing/sysfs-bus-typec
 F:	Documentation/driver-api/usb/typec_bus.rst
 F:	drivers/usb/typec/altmodes/
 F:	include/linux/usb/typec_altmode.h
+
+USB TYPEC PORT CONTROLLER DRIVERS
+M:	Guenter Roeck <linux@roeck-us.net>
+L:	linux-usb@vger.kernel.org
+S:	Maintained
+F:	drivers/usb/typec/tcpm/
 
 USB UHCI DRIVER
 M:	Alan Stern <stern@rowland.harvard.edu>

@@ -1,0 +1,20 @@
+boot_magic: ANDROID!
+kernel_size: 28741640
+kernel load address: 0x10008000
+ramdisk size: 763175
+ramdisk load address: 0x11000000
+second bootloader size: 195072
+second bootloader load address: 0x10f00000
+kernel tags load address: 0x10000100
+page size: 2048
+os version: 10.0.0
+os patch level: 2020-11
+boot image header version: 2
+product name: 
+command line args: console=ttyFIQ0 androidboot.baseband=N/A androidboot.wificountrycode=US androidboot.veritymode=enforcing androidboot.hardware=rk30board androidboot.console=ttyFIQ0 androidboot.verifiedbootstate=orange firmware_class.path=/vendor/etc/firmware init=/init rootwait ro loop.max_part=7
+additional command line args: 
+recovery dtbo size: 0
+recovery dtbo offset: 0x0
+boot header size: 1660
+dtb size: 0
+dtb address: 0x11f00000
