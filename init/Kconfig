@@ -334,15 +334,20 @@ config AUDIT
 	help
 	  Enable auditing infrastructure that can be used with another
 	  kernel subsystem, such as SELinux (which requires this for
-	  logging of avc messages output).  System call auditing is included
-	  on architectures which support it.
+	  logging of avc messages output). Does not do system-call
+	  auditing without CONFIG_AUDITSYSCALL.
 
 config HAVE_ARCH_AUDITSYSCALL
 	bool
 
 config AUDITSYSCALL
-	def_bool y
+	bool "Enable system-call auditing support"
 	depends on AUDIT && HAVE_ARCH_AUDITSYSCALL
+	default y if SECURITY_SELINUX
+	help
+	  Enable low-overhead system-call auditing infrastructure that
+	  can be used independently or with another kernel subsystem,
+	  such as SELinux.
 
 config AUDIT_WATCH
 	def_bool y
@@ -1221,7 +1226,29 @@ if BLK_DEV_INITRD
 
 source "usr/Kconfig"
 
+config INITRD_ASYNC
+	bool "Initrd async"
+	help
+	  Init ramdisk async, can reduce kernel init time.
+
+config ROCKCHIP_ONE_INITRD
+	bool "Detect only one initrd"
+	depends on ARCH_ROCKCHIP
+	default ARCH_ROCKCHIP
+	help
+	  RK bootloader does not put a correct size to cmdline.
+	  Directly return when we get a good initrd.
+
 endif
+
+config INITCALL_ASYNC
+	bool "Call initcall async"
+	depends on ROCKCHIP_THUNDER_BOOT
+	help
+	  Call same level initcall async in kthread.
+	  Kernel parameter "initcall_nr_threads" control how many threads.
+	  initcall_nr_threads default is 0, which disable intcall async.
+	  initcall_nr_threads=-1, auto selected the number of threads.
 
 choice
 	prompt "Compiler optimization level"
@@ -1736,10 +1763,16 @@ config VM_EVENT_COUNTERS
 	  on EXPERT systems.  /proc/vmstat will only show page counts
 	  if VM event counters are disabled.
 
+config SLUB_SYSFS
+	bool "Enable SLUB sysfs interface"
+	depends on SLUB && SYSFS
+	default y
+
 config SLUB_DEBUG
 	default y
 	bool "Enable SLUB debugging support" if EXPERT
 	depends on SLUB && SYSFS
+	select SLUB_SYSFS
 	help
 	  SLUB has extensive debug support features. Disabling these can
 	  result in significant savings in code size. This also disables
