@@ -66,6 +66,7 @@ void mmc_retune_enable(struct mmc_host *host)
 		mod_timer(&host->retune_timer,
 			  jiffies + host->retune_period * HZ);
 }
+EXPORT_SYMBOL(mmc_retune_enable);
 
 /*
  * Pause re-tuning for a small set of operations.  The pause begins after the
@@ -98,6 +99,7 @@ void mmc_retune_disable(struct mmc_host *host)
 	host->retune_now = 0;
 	host->need_retune = 0;
 }
+EXPORT_SYMBOL(mmc_retune_disable);
 
 void mmc_retune_timer_stop(struct mmc_host *host)
 {
@@ -333,6 +335,20 @@ int mmc_of_parse(struct mmc_host *host)
 				"can't use fixed driver type, media is removable\n");
 	}
 
+	if (device_property_read_bool(dev, "supports-sd"))
+		host->restrict_caps |= RESTRICT_CARD_TYPE_SD;
+	if (device_property_read_bool(dev, "supports-sdio"))
+		host->restrict_caps |= RESTRICT_CARD_TYPE_SDIO;
+	if (device_property_read_bool(dev, "supports-emmc"))
+		host->restrict_caps |= RESTRICT_CARD_TYPE_EMMC;
+
+#ifdef CONFIG_SDIO_KEEPALIVE
+	host->support_chip_alive =
+		device_property_read_bool(dev, "supports-chip-alive");
+	host->logic_remove_card =
+		device_property_read_bool(dev, "logic-remove-card");
+#endif
+
 	host->dsr_req = !device_property_read_u32(dev, "dsr", &host->dsr);
 	if (host->dsr_req && (host->dsr & ~0xffff)) {
 		dev_err(host->parent,
@@ -350,6 +366,20 @@ int mmc_of_parse(struct mmc_host *host)
 EXPORT_SYMBOL(mmc_of_parse);
 
 /**
+ * mmc_first_nonreserved_index() - get the first index that is not reserved
+ */
+static int mmc_first_nonreserved_index(void)
+{
+	int max;
+
+	max = of_alias_get_highest_id("mmc");
+	if (max < 0)
+		return 0;
+
+	return max + 1;
+}
+
+/**
  *	mmc_alloc_host - initialise the per-host structure.
  *	@extra: sizeof private data structure
  *	@dev: pointer to host device model structure
@@ -360,6 +390,7 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 {
 	int err;
 	struct mmc_host *host;
+	int alias_id, min_idx, max_idx;
 
 	host = kzalloc(sizeof(struct mmc_host) + extra, GFP_KERNEL);
 	if (!host)
@@ -368,7 +399,16 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 	/* scanning will be enabled when we're ready */
 	host->rescan_disable = 1;
 
-	err = ida_simple_get(&mmc_host_ida, 0, 0, GFP_KERNEL);
+	alias_id = of_alias_get_id(dev->of_node, "mmc");
+	if (alias_id >= 0) {
+		min_idx = alias_id;
+		max_idx = alias_id + 1;
+	} else {
+		min_idx = mmc_first_nonreserved_index();
+		max_idx = 0;
+	}
+
+	err = ida_simple_get(&mmc_host_ida, min_idx, max_idx, GFP_KERNEL);
 	if (err < 0) {
 		kfree(host);
 		return NULL;
@@ -414,6 +454,9 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 
 EXPORT_SYMBOL(mmc_alloc_host);
 
+struct mmc_host *primary_sdio_host;
+EXPORT_SYMBOL(primary_sdio_host);
+
 /**
  *	mmc_add_host - initialise host hardware
  *	@host: mmc host
@@ -442,6 +485,9 @@ int mmc_add_host(struct mmc_host *host)
 	mmc_start_host(host);
 	if (!(host->pm_flags & MMC_PM_IGNORE_PM_NOTIFY))
 		mmc_register_pm_notifier(host);
+
+	if (host->restrict_caps & RESTRICT_CARD_TYPE_SDIO)
+		primary_sdio_host = host;
 
 	return 0;
 }
@@ -487,3 +533,45 @@ void mmc_free_host(struct mmc_host *host)
 }
 
 EXPORT_SYMBOL(mmc_free_host);
+
+/**
+ * mmc_host_rescan - triger software rescan flow
+ * @host: mmc host
+ *
+ * rescan slot attach in the assigned host.
+ * If @host is NULL, default rescan primary_sdio_host
+ * saved by mmc_add_host().
+ * OR, rescan host from argument.
+ *
+ */
+int mmc_host_rescan(struct mmc_host *host, int val, int is_cap_sdio_irq)
+{
+	if (NULL != primary_sdio_host) {
+		if (!host)
+			host = primary_sdio_host;
+		else
+			pr_info("%s: mmc_host_rescan pass in host from argument!\n",
+				mmc_hostname(host));
+	} else {
+		pr_err("sdio: host isn't  initialization successfully.\n");
+		return -ENOMEDIUM;
+	}
+
+	pr_info("%s:mmc host rescan start!\n", mmc_hostname(host));
+
+	/*  0: oob  1:cap-sdio-irq */
+	if (is_cap_sdio_irq == 1) {
+		host->caps |= MMC_CAP_SDIO_IRQ;
+	} else if (is_cap_sdio_irq == 0) {
+		host->caps &= ~MMC_CAP_SDIO_IRQ;
+	} else {
+		dev_err(&host->class_dev, "sdio: host doesn't identify oob or sdio_irq mode!\n");
+		return -ENOMEDIUM;
+	}
+
+	if (!(host->caps & MMC_CAP_NONREMOVABLE) && host->ops->set_sdio_status)
+		host->ops->set_sdio_status(host, val);
+
+	return 0;
+}
+EXPORT_SYMBOL(mmc_host_rescan);

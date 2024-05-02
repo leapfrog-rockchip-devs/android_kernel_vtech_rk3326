@@ -1,0 +1,19 @@
+menuconfig ATBM_WIRELESS
+    tristate "Atbm Wireless Lan"
+    default m
+
+if ATBM_WIRELESS
+config ATBM_APOLLO
+    tristate "ATBM_APOLLO WLAN support"
+    select CRYPTO
+    select CRYPTO_ARC4
+    select CRYPTO_AES
+    select CRC32
+    select AVERAGE
+    depends on !ATBM_MENUCONFIG
+    help
+
+    This is an experimental driver for the ATBM_APOLLO chip-set.
+    Enabling this option enables the generic driver without
+    any platform support.
+endif 

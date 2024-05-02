@@ -29,6 +29,33 @@ struct gpio_led_data {
 	gpio_blink_set_t platform_gpio_blink_set;
 };
 
+
+struct gpio_desc *gfull_gpio=NULL;
+struct gpio_desc *gcharging_gpio=NULL;
+
+void led_setfull_gpiovalue(int state)
+{
+	
+		
+	if (IS_ERR(gfull_gpio)) {
+		return;
+	}
+	if(gfull_gpio)
+	{
+	    //printk("enter gpio_led_probled.name6666666666state=%d\n\n",state);
+		gpiod_set_value(gfull_gpio,state);
+	}
+}
+EXPORT_SYMBOL(led_setfull_gpiovalue);
+void led_setcharging_gpiovalue(int state)
+{
+    if (IS_ERR(gcharging_gpio)) {
+		return;
+	}
+	gpiod_set_value(gcharging_gpio,state);
+		
+}
+EXPORT_SYMBOL(led_setcharging_gpiovalue);
 static inline struct gpio_led_data *
 			cdev_to_gpio_led_data(struct led_classdev *led_cdev)
 {
@@ -42,9 +69,9 @@ static void gpio_led_set(struct led_classdev *led_cdev,
 	int level;
 
 	if (value == LED_OFF)
-		level = 0;
-	else
 		level = 1;
+	else
+		level = 0;
 
 	if (led_dat->blinking) {
 		led_dat->platform_gpio_blink_set(led_dat->gpiod, level,
@@ -137,10 +164,11 @@ static int create_gpio_led(const struct gpio_led *template,
 	if (template->retain_state_shutdown)
 		led_dat->cdev.flags |= LED_RETAIN_AT_SHUTDOWN;
 
-	ret = gpiod_direction_output(led_dat->gpiod, state);
-	if (ret < 0)
-		return ret;
-
+	//ret = gpiod_direction_output(led_dat->gpiod, 0);
+	//if (ret < 0)
+	//	return ret;
+	//led_setfull_gpiovalue(1);
+	//led_setcharging_gpiovalue(1);
 	return devm_of_led_classdev_register(parent, np, &led_dat->cdev);
 }
 
@@ -191,7 +219,16 @@ static struct gpio_leds_priv *gpio_leds_create(struct platform_device *pdev)
 			fwnode_handle_put(child);
 			return ERR_CAST(led.gpiod);
 		}
-
+		if(strcmp(led.name,"battery_full")==0)
+		{
+			  gfull_gpio=led.gpiod;
+			//	printk("enter gpio_led_probled.name2222222\n\n");
+	  }
+	  	if(strcmp(led.name,"battery_charging")==0)
+		{
+			  gcharging_gpio=led.gpiod;
+			//	printk("enter gpio_led_probled.name5555555n\n");
+	  }
 		fwnode_property_read_string(child, "linux,default-trigger",
 					    &led.default_trigger);
 

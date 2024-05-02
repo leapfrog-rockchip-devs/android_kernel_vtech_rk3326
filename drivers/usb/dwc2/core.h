@@ -68,6 +68,9 @@
 /* Maximum number of Endpoints/HostChannels */
 #define MAX_EPS_CHANNELS	16
 
+/* Maximum number of dwc2 clocks */
+#define DWC2_MAX_CLKS 3
+
 /* dwc2-hsotg declarations */
 static const char * const dwc2_hsotg_supply_names[] = {
 	"vusb_d",               /* digital USB supply, 1.2V */
@@ -833,6 +836,7 @@ struct dwc2_hregs_backup {
  * @hcd_enabled:	Host mode sub-driver initialization indicator.
  * @gadget_enabled:	Peripheral mode sub-driver initialization indicator.
  * @ll_hw_enabled:	Status of low-level hardware resources.
+ * @ll_phy_enabled	Status of low-level PHY resources.
  * @hibernated:		True if core is hibernated
  * @frame_number:       Frame number read from the core. For both device
  *			and host modes. The value ranges are from 0
@@ -1019,10 +1023,13 @@ struct dwc2_hsotg {
 	unsigned int hcd_enabled:1;
 	unsigned int gadget_enabled:1;
 	unsigned int ll_hw_enabled:1;
+	unsigned int ll_phy_enabled:1;
 	unsigned int hibernated:1;
+	bool bus_suspended;
 	u16 frame_number;
 
 	struct phy *phy;
+	struct work_struct phy_rst_work;
 	struct usb_phy *uphy;
 	struct dwc2_hsotg_plat *plat;
 	struct regulator_bulk_data supplies[DWC2_NUM_SUPPLIES];
@@ -1032,7 +1039,7 @@ struct dwc2_hsotg {
 	spinlock_t lock;
 	void *priv;
 	int     irq;
-	struct clk *clk;
+	struct clk *clks[DWC2_MAX_CLKS];
 	struct reset_control *reset;
 	struct reset_control *reset_ecc;
 
@@ -1098,7 +1105,6 @@ struct dwc2_hsotg {
 	unsigned long hs_periodic_bitmap[
 		DIV_ROUND_UP(DWC2_HS_SCHEDULE_US, BITS_PER_LONG)];
 	u16 periodic_qh_count;
-	bool bus_suspended;
 	bool new_connection;
 
 	u16 last_frame_num;
@@ -1291,6 +1297,9 @@ extern const struct of_device_id dwc2_of_match_table[];
 
 int dwc2_lowlevel_hw_enable(struct dwc2_hsotg *hsotg);
 int dwc2_lowlevel_hw_disable(struct dwc2_hsotg *hsotg);
+
+int dwc2_lowlevel_phy_enable(struct dwc2_hsotg *hsotg);
+int dwc2_lowlevel_phy_disable(struct dwc2_hsotg *hsotg);
 
 /* Common polling functions */
 int dwc2_hsotg_wait_bit_set(struct dwc2_hsotg *hs_otg, u32 reg, u32 bit,

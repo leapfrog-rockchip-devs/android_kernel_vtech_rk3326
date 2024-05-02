@@ -548,11 +548,7 @@ static int pwm_backlight_probe(struct platform_device *pdev)
 		pb->levels = data->levels;
 	}
 
-	/*
-	 * FIXME: pwm_apply_args() should be removed when switching to
-	 * the atomic PWM API.
-	 */
-	pwm_apply_args(pb->pwm);
+	pwm_adjust_config(pb->pwm);
 
 	/*
 	 * The DT case will set the pwm_period_ns field to 0 and store the
@@ -630,6 +626,9 @@ static int pwm_backlight_suspend(struct device *dev)
 	struct backlight_device *bl = dev_get_drvdata(dev);
 	struct pwm_bl_data *pb = bl_get_data(bl);
 
+	if (mem_sleep_current == PM_SUSPEND_MEM_LITE)
+		return 0;
+
 	if (pb->notify)
 		pb->notify(pb->dev, 0);
 
@@ -644,6 +643,9 @@ static int pwm_backlight_suspend(struct device *dev)
 static int pwm_backlight_resume(struct device *dev)
 {
 	struct backlight_device *bl = dev_get_drvdata(dev);
+
+	if (mem_sleep_current == PM_SUSPEND_MEM_LITE)
+		return 0;
 
 	backlight_update_status(bl);
 

@@ -1105,5 +1105,9 @@ static int __init pwm_debugfs_init(void)
 
 	return 0;
 }
+#ifdef CONFIG_ROCKCHIP_THUNDER_BOOT
+postcore_initcall(pwm_debugfs_init);
+#else
 subsys_initcall(pwm_debugfs_init);
+#endif
 #endif /* CONFIG_DEBUG_FS */

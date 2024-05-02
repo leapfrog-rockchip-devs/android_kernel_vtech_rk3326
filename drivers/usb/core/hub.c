@@ -1790,7 +1790,8 @@ static int hub_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	 * bus_resume methods.
 	 */
 	if (hdev->parent) {		/* normal device */
-		usb_enable_autosuspend(hdev);
+		if (!(hdev->parent->quirks & USB_QUIRK_AUTO_SUSPEND))
+			usb_enable_autosuspend(hdev);
 	} else {			/* root hub */
 		const struct hc_driver *drv = bus_to_hcd(hdev->bus)->driver;
 
@@ -5139,7 +5140,8 @@ loop:
 done:
 	hub_port_disable(hub, port1, 1);
 	if (hcd->driver->relinquish_port && !hub->hdev->parent) {
-		if (status != -ENOTCONN && status != -ENODEV)
+		if ((status != -ENOTCONN && status != -ENODEV) ||
+		    (status == -ENOTCONN && hcd->rk3288_relinquish_port_quirk))
 			hcd->driver->relinquish_port(hcd, port1);
 	}
 }
@@ -5301,7 +5303,24 @@ static void port_event(struct usb_hub *hub, int port1)
 		} else {
 			usb_unlock_port(port_dev);
 			usb_lock_device(udev);
-			usb_reset_device(udev);
+
+			/**
+			 * Some special SoCs (e.g. rk322xh) USB3 PHY lose the
+			 * ability to detect a disconnection when USB3 device
+			 * plug out, fortunately, it can detect port link state
+			 * change here, so we can do soft disconnect according
+			 * to the PLC here.
+			 *
+			 * And we only need to do the soft disconnect for root
+			 * hub. In addition, we just reuse the autosuspend quirk
+			 * but not add a new quirk for this issue. Because this
+			 * issue always occurs with autosuspend problem.
+			 */
+			if (!hub->hdev->parent && (hdev->quirks &
+			    USB_QUIRK_AUTO_SUSPEND))
+				usb_remove_device(udev);
+			else
+				usb_reset_device(udev);
 			usb_unlock_device(udev);
 			usb_lock_port(port_dev);
 			connect_change = 0;

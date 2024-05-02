@@ -1,0 +1,26 @@
+--- drivers/pinctrl/pinctrl-rockchip.c
++++ drivers/pinctrl/pinctrl-rockchip.c
+@@ -2329,17 +2329,17 @@ static int rockchip_set_drive_perpin(struct rockchip_pin_bank *bank,
+ 		rmask = data | (data >> 16);
+ 		data |= (1 << (strength + 1)) - 1;
+ 
+-		ret = regmap_update_bits(regmap, reg, rmask, data);
+-		if (ret)
+-			return ret;
++		err = regmap_update_bits(regmap, reg, rmask, data);
++		if (err)
++			return err;
+ 	}
+ 
+ 	if (drv_type == DRV_TYPE_IO_SMIC) {
+ 		ctrl->slew_rate_calc_reg(bank, pin_num, &regmap, &reg, &bit);
+ 		data = BIT(bit + 16) | (((ret >> 2) & 0x1) << bit);
+-		ret = regmap_write(regmap, reg, data);
+-		if (ret)
+-			return ret;
++		err = regmap_write(regmap, reg, data);
++		if (err)
++			return err;
+ 	}
+ 
+ 	return 0;

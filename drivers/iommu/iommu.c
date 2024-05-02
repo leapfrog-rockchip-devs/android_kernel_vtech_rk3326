@@ -108,6 +108,7 @@ void iommu_device_unregister(struct iommu_device *iommu)
 	list_del(&iommu->list);
 	spin_unlock(&iommu_device_lock);
 }
+EXPORT_SYMBOL_GPL(iommu_device_unregister);
 
 static struct iommu_domain *__iommu_domain_alloc(struct bus_type *bus,
 						 unsigned type);
@@ -1095,6 +1096,7 @@ struct iommu_domain *iommu_group_default_domain(struct iommu_group *group)
 {
 	return group->default_domain;
 }
+EXPORT_SYMBOL_GPL(iommu_group_default_domain);
 
 static int add_iommu_group(struct device *dev, void *data)
 {
@@ -1330,6 +1332,13 @@ static int __iommu_attach_device(struct iommu_domain *domain,
 				 struct device *dev)
 {
 	int ret;
+
+	/* Hack for disable iommu */
+	if (!domain) {
+		ret = dev->bus->iommu_ops->attach_dev(domain, dev);
+		return ret;
+	}
+
 	if ((domain->ops->is_attach_deferred != NULL) &&
 	    domain->ops->is_attach_deferred(domain, dev))
 		return 0;
@@ -1364,7 +1373,9 @@ int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
 	 */
 	mutex_lock(&group->mutex);
 	ret = -EINVAL;
-	if (iommu_group_device_count(group) != 1)
+
+	/* don't break attach if iommu shared by more than one master */
+	if (iommu_group_device_count(group) < 1)
 		goto out_unlock;
 
 	ret = __iommu_attach_group(domain, group);
@@ -1400,7 +1411,8 @@ void iommu_detach_device(struct iommu_domain *domain, struct device *dev)
 		return;
 
 	mutex_lock(&group->mutex);
-	if (iommu_group_device_count(group) != 1) {
+	/* Don't break detach if iommu shared by more than one master */
+	if (iommu_group_device_count(group) < 1) {
 		WARN_ON(1);
 		goto out_unlock;
 	}
@@ -1669,14 +1681,14 @@ static size_t __iommu_unmap(struct iommu_domain *domain,
 	 * or we hit an area that isn't mapped.
 	 */
 	while (unmapped < size) {
-		size_t left = size - unmapped;
+		size_t pgsize = iommu_pgsize(domain->pgsize_bitmap, iova, size - unmapped);
 
-		unmapped_page = ops->unmap(domain, iova, left);
+		unmapped_page = ops->unmap(domain, iova, pgsize);
 		if (!unmapped_page)
 			break;
 
 		if (sync && ops->iotlb_range_add)
-			ops->iotlb_range_add(domain, iova, left);
+			ops->iotlb_range_add(domain, iova, pgsize);
 
 		pr_debug("unmapped: iova 0x%lx size 0x%zx\n",
 			 iova, unmapped_page);
@@ -1749,6 +1761,9 @@ size_t default_iommu_map_sg(struct iommu_domain *domain, unsigned long iova,
 
 		mapped += s->length;
 	}
+
+	if (domain->ops->flush_iotlb_all && (prot & IOMMU_TLB_SHOT_ENTIRE))
+		domain->ops->flush_iotlb_all(domain);
 
 	return mapped;
 

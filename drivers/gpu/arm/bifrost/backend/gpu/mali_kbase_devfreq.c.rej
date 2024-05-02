@@ -1,0 +1,10 @@
+--- drivers/gpu/arm/bifrost/backend/gpu/mali_kbase_devfreq.c
++++ drivers/gpu/arm/bifrost/backend/gpu/mali_kbase_devfreq.c
+@@ -34,6 +34,7 @@
+ 
+ #include <linux/version.h>
+ #include <linux/pm_opp.h>
++#include <linux/pm_runtime.h>
+ 
+ #include <soc/rockchip/rockchip_ipa.h>
+ #include <soc/rockchip/rockchip_opp_select.h>

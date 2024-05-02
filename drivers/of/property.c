@@ -1346,7 +1346,11 @@ static int of_link_to_suppliers(struct device *dev,
 	return ret;
 }
 
+#ifdef CONFIG_ARCH_ROCKCHIP
+static bool of_devlink;
+#else
 static bool of_devlink = true;
+#endif
 core_param(of_devlink, of_devlink, bool, 0);
 
 static int of_fwnode_add_links(const struct fwnode_handle *fwnode,

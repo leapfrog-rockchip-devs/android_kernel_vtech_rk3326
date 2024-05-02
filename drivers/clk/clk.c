@@ -25,6 +25,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/sched.h>
 #include <linux/clkdev.h>
+#include <linux/uaccess.h>
 #include <linux/of_platform.h>
 #include <linux/pm_opp.h>
 #include <linux/regulator/consumer.h>
@@ -46,11 +47,6 @@ static LIST_HEAD(clk_notifier_list);
 
 static struct hlist_head *all_lists[] = {
 	&clk_root_list,
-	&clk_orphan_list,
-	NULL,
-};
-
-static struct hlist_head *orphan_list[] = {
 	&clk_orphan_list,
 	NULL,
 };
@@ -102,7 +98,7 @@ struct clk_core {
 	struct hlist_node	child_node;
 	struct hlist_head	clks;
 	unsigned int		notifier_count;
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_COMMON_CLK_DEBUGFS
 	struct dentry		*dentry;
 	struct hlist_node	debug_node;
 #endif
@@ -2189,6 +2185,9 @@ static struct clk_core *clk_propagate_rate_change(struct clk_core *core,
 	return fail_clk;
 }
 
+static int clk_core_set_rate_nolock(struct clk_core *core,
+				    unsigned long req_rate);
+
 /*
  * walk down a subtree and set the new rates notifying the rate
  * change on the way
@@ -2296,6 +2295,12 @@ static int clk_change_rate(struct clk_core *core)
 	/* handle the new child who might not be in core->children yet */
 	if (core->new_child)
 		rc = clk_change_rate(core->new_child);
+
+	/* handle a changed clock that needs to readjust its rate */
+	if (core->flags & CLK_KEEP_REQ_RATE && core->req_rate
+					    && core->new_rate != old_rate
+					    && core->new_rate != core->req_rate)
+		clk_core_set_rate_nolock(core, core->req_rate);
 
 err_set_rate:
 	clk_pm_runtime_put(core);
@@ -2446,6 +2451,8 @@ static int clk_core_set_rate_nolock(struct clk_core *core,
 		goto pre_rate_change_err;
 	}
 
+	core->req_rate = req_rate;
+
 	/* change the rates */
 	ret = clk_change_rate(top);
 	set_rate_nesting_count--;
@@ -2456,8 +2463,6 @@ static int clk_core_set_rate_nolock(struct clk_core *core,
 		clk_vote_safe_vdd();
 		goto post_rate_change_err;
 	}
-
-	core->req_rate = req_rate;
 
 post_rate_change_err:
 	/*
@@ -3176,13 +3181,18 @@ EXPORT_SYMBOL(clk_debug_print_hw);
 
 /***        debugfs support        ***/
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_COMMON_CLK_DEBUGFS
 #include <linux/debugfs.h>
 
 static struct dentry *rootdir;
 static int inited = 0;
 static DEFINE_MUTEX(clk_debug_lock);
 static HLIST_HEAD(clk_debug_list);
+
+static struct hlist_head *orphan_list[] = {
+	&clk_orphan_list,
+	NULL,
+};
 
 static void clk_summary_show_one(struct seq_file *s, struct clk_core *c,
 				 int level)
@@ -3311,6 +3321,8 @@ static const struct {
 	ENTRY(CLK_IS_CRITICAL),
 	ENTRY(CLK_OPS_PARENT_ENABLE),
 	ENTRY(CLK_DUTY_CYCLE_PARENT),
+	ENTRY(CLK_DONT_HOLD_STATE),
+	ENTRY(CLK_KEEP_REQ_RATE),
 #undef ENTRY
 };
 
@@ -3360,6 +3372,211 @@ static int clk_duty_cycle_show(struct seq_file *s, void *data)
 }
 DEFINE_SHOW_ATTRIBUTE(clk_duty_cycle);
 
+static int clock_debug_rate_set(void *data, u64 val)
+{
+	struct clk_core *core = data;
+	int ret;
+
+	ret = clk_set_rate(core->hw->clk, val);
+	if (ret)
+		pr_err("clk_set_rate(%lu) failed (%d)\n",
+		       (unsigned long)val, ret);
+
+	return ret;
+}
+
+static int clock_debug_rate_get(void *data, u64 *val)
+{
+	struct clk_core *core = data;
+
+	*val = core->hw->core->rate;
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(clock_rate_fops, clock_debug_rate_get,
+			clock_debug_rate_set, "%llu\n");
+
+static int clock_available_parent_show(struct seq_file *s, void *data)
+{
+	struct clk_core *core = (struct clk_core *)s->private;
+	int i;
+
+	for (i = 0; i < core->num_parents; i++) {
+		if (!core->parents[i])
+			continue;
+		seq_printf(s, "%s ", core->parents[i]->name);
+	}
+	seq_puts(s, "\n");
+
+	return 0;
+}
+
+static int clock_available_parent_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, clock_available_parent_show, inode->i_private);
+}
+
+static const struct file_operations clock_available_parent_fops = {
+	.open		= clock_available_parent_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static ssize_t clock_parent_read(struct file *filp, char __user *ubuf,
+				 size_t cnt, loff_t *ppos)
+{
+	char name[256] = {0};
+	struct clk_core *core = filp->private_data;
+	struct clk_core *p = core->parent;
+
+	snprintf(name, sizeof(name), "%s\n", p ? p->name : "None\n");
+
+	return simple_read_from_buffer(ubuf, cnt, ppos, name, strlen(name));
+}
+
+static ssize_t clock_parent_write(struct file *filp, const char __user *buf,
+				  size_t cnt, loff_t *ppos)
+{
+	char temp[256] = {0};
+	char name[256] = {0};
+	struct clk_core *core = filp->private_data;
+	unsigned int ret, i;
+
+	if (copy_from_user(temp, buf, cnt))
+		return -EINVAL;
+
+	ret = sscanf(temp, "%s", name);
+	if (ret != 1)
+		return -EINVAL;
+
+	for (i = 0; i < core->num_parents; i++) {
+		if (!core->parents[i])
+			continue;
+		if (!strcmp(core->parents[i]->name, name)) {
+			if (core->parents[i] != core->parent)
+				clk_core_set_parent_nolock(core,
+							   core->parents[i]);
+			break;
+		}
+	}
+
+	return cnt;
+}
+
+static const struct file_operations clock_parent_fops = {
+	.open	= simple_open,
+	.read	= clock_parent_read,
+	.write	= clock_parent_write,
+};
+
+static int clock_debug_enable_set(void *data, u64 val)
+{
+	struct clk_core *core = data;
+	int rc = 0;
+
+	if (val)
+		rc = clk_prepare_enable(core->hw->clk);
+	else
+		clk_disable_unprepare(core->hw->clk);
+
+	return rc;
+}
+
+static int clock_debug_enable_get(void *data, u64 *val)
+{
+	struct clk_core *core = data;
+	int enabled = 0;
+
+	enabled = core->enable_count;
+
+	*val = enabled;
+
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(clock_enable_fops, clock_debug_enable_get,
+			 clock_debug_enable_set, "%lld\n");
+
+#define clock_debug_output(m, c, fmt, ...)		\
+do {							\
+	if (m)						\
+		seq_printf(m, fmt, ##__VA_ARGS__);	\
+	else if (c)					\
+		pr_cont(fmt, ##__VA_ARGS__);		\
+	else						\
+		pr_info(fmt, ##__VA_ARGS__);		\
+} while (0)
+
+static int clock_debug_print_clock(struct clk_core *c, struct seq_file *s)
+{
+	char *start = "";
+	struct clk *clk;
+
+	if (!c || !c->prepare_count)
+		return 0;
+
+	clk = c->hw->clk;
+
+	clock_debug_output(s, 0, "\t");
+
+	do {
+		clock_debug_output(s, 1, "%s%s:%u:%u [%ld]", start,
+				   clk->core->name,
+				   clk->core->prepare_count,
+				   clk->core->enable_count,
+				   clk->core->rate);
+		start = " -> ";
+	} while ((clk = clk_get_parent(clk)));
+
+	clock_debug_output(s, 1, "\n");
+
+	return 1;
+}
+
+/*
+ * clock_debug_print_enabled_clocks() - Print names of enabled clocks
+ */
+static void clock_debug_print_enabled_clocks(struct seq_file *s)
+{
+	struct clk_core *core;
+	int cnt = 0;
+
+	clock_debug_output(s, 0, "Enabled clocks:\n");
+
+	mutex_lock(&clk_debug_lock);
+
+	hlist_for_each_entry(core, &clk_debug_list, debug_node)
+		cnt += clock_debug_print_clock(core, s);
+
+	mutex_unlock(&clk_debug_lock);
+
+	if (cnt)
+		clock_debug_output(s, 0, "Enabled clock count: %d\n", cnt);
+	else
+		clock_debug_output(s, 0, "No clocks enabled.\n");
+}
+
+static int enabled_clocks_show(struct seq_file *s, void *unused)
+{
+	clock_debug_print_enabled_clocks(s);
+
+	return 0;
+}
+
+static int enabled_clocks_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, enabled_clocks_show, inode->i_private);
+}
+
+static const struct file_operations clk_enabled_list_fops = {
+	.open		= enabled_clocks_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
+};
+
 static void clk_debug_create_one(struct clk_core *core, struct dentry *pdentry)
 {
 	struct dentry *root;
@@ -3370,16 +3587,22 @@ static void clk_debug_create_one(struct clk_core *core, struct dentry *pdentry)
 	root = debugfs_create_dir(core->name, pdentry);
 	core->dentry = root;
 
-	debugfs_create_ulong("clk_rate", 0444, root, &core->rate);
+	debugfs_create_file("clk_rate", 0444, root, core,
+			    &clock_rate_fops);
 	debugfs_create_ulong("clk_accuracy", 0444, root, &core->accuracy);
 	debugfs_create_u32("clk_phase", 0444, root, &core->phase);
 	debugfs_create_file("clk_flags", 0444, root, core, &clk_flags_fops);
 	debugfs_create_u32("clk_prepare_count", 0444, root, &core->prepare_count);
-	debugfs_create_u32("clk_enable_count", 0444, root, &core->enable_count);
+	debugfs_create_file("clk_enable_count", 0444, root, core,
+			    &clock_enable_fops);
 	debugfs_create_u32("clk_protect_count", 0444, root, &core->protect_count);
 	debugfs_create_u32("clk_notifier_count", 0444, root, &core->notifier_count);
 	debugfs_create_file("clk_duty_cycle", 0444, root, core,
 			    &clk_duty_cycle_fops);
+	debugfs_create_file("clk_available_parent", 0444, root, core,
+			    &clock_available_parent_fops);
+	debugfs_create_file("clk_parent", 0444, root, core,
+			    &clock_parent_fops);
 
 	if (core->num_parents > 1)
 		debugfs_create_file("clk_possible_parents", 0444, root, core,
@@ -3446,6 +3669,9 @@ static int __init clk_debug_init(void)
 			    &clk_summary_fops);
 	debugfs_create_file("clk_orphan_dump", 0444, rootdir, &orphan_list,
 			    &clk_dump_fops);
+
+	debugfs_create_file("clk_enabled_list", 0444, rootdir,
+			    &clk_debug_list, &clk_enabled_list_fops);
 
 	mutex_lock(&clk_debug_lock);
 	hlist_for_each_entry(core, &clk_debug_list, debug_node)
@@ -3726,14 +3952,10 @@ unlock:
 	return ret;
 }
 
-struct clk *__clk_create_clk(struct clk_hw *hw, const char *dev_id,
-			     const char *con_id)
+static struct clk *clk_hw_create_clk(struct clk_hw *hw, const char *dev_id,
+				     const char *con_id)
 {
 	struct clk *clk;
-
-	/* This is to allow this function to be chained to others */
-	if (IS_ERR_OR_NULL(hw))
-		return ERR_CAST(hw);
 
 	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
 	if (!clk)
@@ -3751,7 +3973,19 @@ struct clk *__clk_create_clk(struct clk_hw *hw, const char *dev_id,
 	return clk;
 }
 
-/* keep in sync with __clk_put */
+struct clk *__clk_create_clk(struct clk_hw *hw, const char *dev_id,
+			     const char *con_id, bool with_orphans)
+{
+	/* This is to allow this function to be chained to others */
+	if (!hw || IS_ERR(hw))
+		return (struct clk *) hw;
+
+	if (hw->core->orphan && !with_orphans)
+		return ERR_PTR(-EPROBE_DEFER);
+
+	return clk_hw_create_clk(hw, dev_id, con_id);
+}
+
 void __clk_free_clk(struct clk *clk)
 {
 	clk_prepare_lock();
@@ -3842,7 +4076,7 @@ struct clk *clk_register(struct device *dev, struct clk_hw *hw)
 	INIT_HLIST_HEAD(&core->clks);
 	INIT_LIST_HEAD(&core->rate_change_node);
 
-	hw->clk = __clk_create_clk(hw, NULL, NULL);
+	hw->clk = clk_hw_create_clk(hw, NULL, NULL);
 	if (IS_ERR(hw->clk)) {
 		ret = PTR_ERR(hw->clk);
 		goto fail_parents;
@@ -4693,7 +4927,8 @@ __of_clk_get_hw_from_provider(struct of_clk_provider *provider,
 }
 
 struct clk *__of_clk_get_from_provider(struct of_phandle_args *clkspec,
-				       const char *dev_id, const char *con_id)
+				       const char *dev_id, const char *con_id,
+				       bool with_orphans)
 {
 	struct of_clk_provider *provider;
 	struct clk *clk = ERR_PTR(-EPROBE_DEFER);
@@ -4707,7 +4942,8 @@ struct clk *__of_clk_get_from_provider(struct of_phandle_args *clkspec,
 	list_for_each_entry(provider, &of_clk_providers, link) {
 		if (provider->node == clkspec->np) {
 			hw = __of_clk_get_hw_from_provider(provider, clkspec);
-			clk = __clk_create_clk(hw, dev_id, con_id);
+			clk = __clk_create_clk(hw, dev_id, con_id,
+					       with_orphans);
 		}
 
 		if (!IS_ERR(clk)) {
@@ -4734,7 +4970,25 @@ struct clk *__of_clk_get_from_provider(struct of_phandle_args *clkspec,
  */
 struct clk *of_clk_get_from_provider(struct of_phandle_args *clkspec)
 {
-	return __of_clk_get_from_provider(clkspec, NULL, __func__);
+	return __of_clk_get_from_provider(clkspec, NULL, __func__, false);
+}
+
+/**
+ * of_clk_get_from_provider_with_orphans() - Lookup clock from a clock provider
+ * @clkspec: pointer to a clock specifier data structure
+ *
+ * This function looks up a struct clk from the registered list of clock
+ * providers, an input is a clock specifier data structure as returned
+ * from the of_parse_phandle_with_args() function call.
+ *
+ * The difference to of_clk_get_from_provider() is that this function will
+ * also successfully lookup orphan-clocks, as it in some cases may be
+ * necessary to access such orphan-clocks as well.
+ */
+struct clk *
+of_clk_get_from_provider_with_orphans(struct of_phandle_args *clkspec)
+{
+	return __of_clk_get_from_provider(clkspec, NULL, __func__, true);
 }
 EXPORT_SYMBOL_GPL(of_clk_get_from_provider);
 
@@ -4987,4 +5241,274 @@ void __init of_clk_init(const struct of_device_id *matches)
 			force = true;
 	}
 }
+#endif
+
+#ifdef CONFIG_COMMON_CLK_PROCFS
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+
+static int clk_rate_show(struct seq_file *s, void *v)
+{
+	seq_puts(s, "set clk rate:\n");
+	seq_puts(s, "	echo [clk_name] [rate(Hz)] > /proc/clk/rate\n");
+
+	return 0;
+}
+
+static int clk_rate_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, clk_rate_show, NULL);
+}
+
+static ssize_t clk_rate_write(struct file *filp, const char __user *buf,
+			      size_t cnt, loff_t *ppos)
+{
+	char clk_name[40], input[55];
+	struct clk_core *core;
+	int argc, ret, val;
+
+	if (cnt >= sizeof(input))
+		return -EINVAL;
+
+	if (copy_from_user(input, buf, cnt))
+		return -EFAULT;
+
+	input[cnt] = '\0';
+
+	argc = sscanf(input, "%38s %10d", clk_name, &val);
+	if (argc != 2)
+		return -EINVAL;
+
+	core = clk_core_lookup(clk_name);
+	if (IS_ERR_OR_NULL(core)) {
+		pr_err("get %s error\n", clk_name);
+		return -EINVAL;
+	}
+
+	clk_prepare_lock();
+	ret = clk_core_set_rate_nolock(core, val);
+	clk_prepare_unlock();
+	if (ret) {
+		pr_err("set %s rate %d error\n", clk_name, val);
+		return ret;
+	}
+
+	return cnt;
+}
+
+static const struct file_operations clk_rate_fops = {
+	.open		= clk_rate_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= clk_rate_write,
+};
+
+static int clk_enable_show(struct seq_file *s, void *v)
+{
+	seq_puts(s, "enable clk:\n");
+	seq_puts(s, "	echo enable [clk_name] > /proc/clk/enable\n");
+	seq_puts(s, "disable clk:\n");
+	seq_puts(s, "	echo disable [clk_name] > /proc/clk/enable\n");
+
+	return 0;
+}
+
+static int clk_enable_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, clk_enable_show, NULL);
+}
+
+static ssize_t clk_enable_write(struct file *filp, const char __user *buf,
+				size_t cnt, loff_t *ppos)
+{
+	char cmd[10], clk_name[40], input[50];
+	struct clk_core *core;
+	int argc, ret;
+
+	if (cnt >= sizeof(input))
+		return -EINVAL;
+
+	if (copy_from_user(input, buf, cnt))
+		return -EFAULT;
+
+	input[cnt] = '\0';
+
+	argc = sscanf(input, "%8s %38s", cmd, clk_name);
+	if (argc != 2)
+		return -EINVAL;
+
+	core = clk_core_lookup(clk_name);
+	if (IS_ERR_OR_NULL(core)) {
+		pr_err("get %s error\n", clk_name);
+		return -EINVAL;
+	}
+
+	if (!strncmp(cmd, "enable", strlen("enable"))) {
+		ret = clk_core_prepare_enable(core);
+		if (ret)
+			pr_err("enable %s err\n", clk_name);
+	} else if (!strncmp(cmd, "disable", strlen("disable"))) {
+		clk_core_disable_unprepare(core);
+	} else {
+		pr_err("unsupported cmd(%s)\n", cmd);
+	}
+
+	return cnt;
+}
+
+static const struct file_operations clk_enable_fops = {
+	.open		= clk_enable_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= clk_enable_write,
+};
+
+static int clk_parent_show(struct seq_file *s, void *v)
+{
+	seq_puts(s, "echo [clk_name] [parent_name] > /proc/clk/parent\n");
+
+	return 0;
+}
+
+static int clk_parent_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, clk_parent_show, NULL);
+}
+
+static ssize_t clk_parent_write(struct file *filp, const char __user *buf,
+				size_t cnt, loff_t *ppos)
+{
+	char clk_name[40], p_name[40];
+	char input[80];
+	struct clk_core *core, *p;
+	int argc, ret;
+
+	if (cnt >= sizeof(input))
+		return -EINVAL;
+
+	if (copy_from_user(input, buf, cnt))
+		return -EFAULT;
+
+	input[cnt] = '\0';
+
+	argc = sscanf(input, "%38s %38s", clk_name, p_name);
+	if (argc != 2)
+		return -EINVAL;
+
+	core = clk_core_lookup(clk_name);
+	if (IS_ERR_OR_NULL(core)) {
+		pr_err("get %s error\n", clk_name);
+		return -EINVAL;
+	}
+	p = clk_core_lookup(p_name);
+	if (IS_ERR_OR_NULL(p)) {
+		pr_err("get %s error\n", p_name);
+		return -EINVAL;
+	}
+	clk_prepare_lock();
+	ret = clk_core_set_parent_nolock(core, p);
+	clk_prepare_unlock();
+	if (ret < 0)
+		pr_err("set clk(%s)'s parent(%s) error\n", clk_name, p_name);
+
+	return cnt;
+}
+
+static const struct file_operations clk_parent_fops = {
+	.open		= clk_parent_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= clk_parent_write,
+};
+
+static void clk_proc_summary_show_one(struct seq_file *s, struct clk_core *c,
+				      int level)
+{
+	if (!c)
+		return;
+
+	seq_printf(s, "%*s%-*s %7d %8d %8d %11lu %10lu %5d %6d\n",
+		   level * 3 + 1, "",
+		   30 - level * 3, c->name,
+		   c->enable_count, c->prepare_count, c->protect_count,
+		   clk_core_get_rate(c), clk_core_get_accuracy(c),
+		   clk_core_get_phase(c),
+		   clk_core_get_scaled_duty_cycle(c, 100000));
+}
+
+static void clk_proc_summary_show_subtree(struct seq_file *s,
+					  struct clk_core *c, int level)
+{
+	struct clk_core *child;
+
+	if (!c)
+		return;
+
+	clk_proc_summary_show_one(s, c, level);
+
+	hlist_for_each_entry(child, &c->children, child_node)
+		clk_proc_summary_show_subtree(s, child, level + 1);
+}
+
+static int clk_proc_summary_show(struct seq_file *s, void *v)
+{
+	struct clk_core *c;
+	struct hlist_head *all_lists[] = {
+		&clk_root_list,
+		&clk_orphan_list,
+		NULL,
+	};
+	struct hlist_head **lists = all_lists;
+
+	seq_puts(s, "                                 enable  prepare  protect                                duty\n");
+	seq_puts(s, "   clock                          count    count    count        rate   accuracy phase  cycle\n");
+	seq_puts(s, "---------------------------------------------------------------------------------------------\n");
+
+	clk_prepare_lock();
+
+	for (; *lists; lists++)
+		hlist_for_each_entry(c, *lists, child_node)
+			clk_proc_summary_show_subtree(s, c, 0);
+
+	clk_prepare_unlock();
+
+	return 0;
+}
+
+static int __init clk_create_procfs(void)
+{
+	struct proc_dir_entry *proc_clk_root;
+	struct proc_dir_entry *ent;
+
+	proc_clk_root = proc_mkdir("clk", NULL);
+	if (!proc_clk_root)
+		return -EINVAL;
+
+	ent = proc_create("rate", 0644, proc_clk_root, &clk_rate_fops);
+	if (!ent)
+		goto fail;
+
+	ent = proc_create("enable", 0644, proc_clk_root, &clk_enable_fops);
+	if (!ent)
+		goto fail;
+
+	ent = proc_create("parent", 0644, proc_clk_root, &clk_parent_fops);
+	if (!ent)
+		goto fail;
+
+	ent = proc_create_single("summary", 0444, proc_clk_root,
+				 clk_proc_summary_show);
+	if (!ent)
+		goto fail;
+
+	return 0;
+
+fail:
+	proc_remove(proc_clk_root);
+	return -EINVAL;
+}
+late_initcall_sync(clk_create_procfs);
 #endif

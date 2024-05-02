@@ -154,6 +154,7 @@ struct its_device {
 	struct its_node		*its;
 	struct event_lpi_map	event_map;
 	void			*itt;
+	u32			itt_sz;
 	u32			nr_ites;
 	u32			device_id;
 	bool			shared;
@@ -1637,6 +1638,8 @@ static struct page *its_allocate_prop_table(gfp_t gfp_flags)
 {
 	struct page *prop_page;
 
+	if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+		gfp_flags |= GFP_DMA32;
 	prop_page = alloc_pages(gfp_flags, get_order(LPI_PROPBASE_SZ));
 	if (!prop_page)
 		return NULL;
@@ -1712,6 +1715,7 @@ static int its_setup_baser(struct its_node *its, struct its_baser *baser,
 	u64 baser_phys, tmp;
 	u32 alloc_pages;
 	void *base;
+	gfp_t gfp_flags;
 
 retry_alloc_baser:
 	alloc_pages = (PAGE_ORDER_TO_SIZE(order) / psz);
@@ -1723,7 +1727,10 @@ retry_alloc_baser:
 		order = get_order(GITS_BASER_PAGES_MAX * psz);
 	}
 
-	base = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, order);
+	gfp_flags = GFP_KERNEL | __GFP_ZERO;
+	if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+		gfp_flags |= GFP_DMA32;
+	base = (void *)__get_free_pages(gfp_flags, order);
 	if (!base)
 		return -ENOMEM;
 
@@ -1768,6 +1775,14 @@ retry_baser:
 
 	its_write_baser(its, baser, val);
 	tmp = baser->val;
+
+	if (of_machine_is_compatible("rockchip,rk3568") ||
+	    of_machine_is_compatible("rockchip,rk3566")) {
+		if (tmp & GITS_BASER_SHAREABILITY_MASK)
+			tmp &= ~GITS_BASER_SHAREABILITY_MASK;
+		else
+			gic_flush_dcache_to_poc(base, PAGE_ORDER_TO_SIZE(order));
+	}
 
 	if ((val ^ tmp) & GITS_BASER_SHAREABILITY_MASK) {
 		/*
@@ -1966,6 +1981,8 @@ static struct page *its_allocate_pending_table(gfp_t gfp_flags)
 	 * The pending pages have to be at least 64kB aligned,
 	 * hence the 'max(LPI_PENDBASE_SZ, SZ_64K)' below.
 	 */
+	if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+		gfp_flags |= GFP_DMA32;
 	pend_page = alloc_pages(gfp_flags | __GFP_ZERO,
 				get_order(max_t(u32, LPI_PENDBASE_SZ, SZ_64K)));
 	if (!pend_page)
@@ -2039,6 +2056,9 @@ static void its_cpu_init_lpis(void)
 	gicr_write_propbaser(val, rbase + GICR_PROPBASER);
 	tmp = gicr_read_propbaser(rbase + GICR_PROPBASER);
 
+	if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+		tmp &= ~GICR_PROPBASER_SHAREABILITY_MASK;
+
 	if ((tmp ^ val) & GICR_PROPBASER_SHAREABILITY_MASK) {
 		if (!(tmp & GICR_PROPBASER_SHAREABILITY_MASK)) {
 			/*
@@ -2062,6 +2082,9 @@ static void its_cpu_init_lpis(void)
 
 	gicr_write_pendbaser(val, rbase + GICR_PENDBASER);
 	tmp = gicr_read_pendbaser(rbase + GICR_PENDBASER);
+
+	if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+		tmp &= ~GICR_PENDBASER_SHAREABILITY_MASK;
 
 	if (!(tmp & GICR_PENDBASER_SHAREABILITY_MASK)) {
 		/*
@@ -2209,7 +2232,11 @@ static bool its_alloc_table_entry(struct its_baser *baser, u32 id)
 
 	/* Allocate memory for 2nd level table */
 	if (!table[idx]) {
-		page = alloc_pages(GFP_KERNEL | __GFP_ZERO, get_order(baser->psz));
+		gfp_t gfp_flags = GFP_KERNEL | __GFP_ZERO;
+
+		if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+			gfp_flags |= GFP_DMA32;
+		page = alloc_pages(gfp_flags, get_order(baser->psz));
 		if (!page)
 			return false;
 
@@ -2283,6 +2310,7 @@ static struct its_device *its_create_device(struct its_node *its, u32 dev_id,
 	int nr_lpis;
 	int nr_ites;
 	int sz;
+	gfp_t gfp_flags;
 
 	if (!its_alloc_device_table(its, dev_id))
 		return NULL;
@@ -2298,7 +2326,10 @@ static struct its_device *its_create_device(struct its_node *its, u32 dev_id,
 	nr_ites = max(2, nvecs);
 	sz = nr_ites * its->ite_size;
 	sz = max(sz, ITS_ITT_ALIGN) + ITS_ITT_ALIGN - 1;
-	itt = kzalloc(sz, GFP_KERNEL);
+	gfp_flags = GFP_KERNEL;
+	if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+		gfp_flags |= GFP_DMA32;
+	itt = (void *)__get_free_pages(gfp_flags, get_order(sz));
 	if (alloc_lpis) {
 		lpi_map = its_lpi_alloc(nvecs, &lpi_base, &nr_lpis);
 		if (lpi_map)
@@ -2312,7 +2343,7 @@ static struct its_device *its_create_device(struct its_node *its, u32 dev_id,
 
 	if (!dev || !itt ||  !col_map || (!lpi_map && alloc_lpis)) {
 		kfree(dev);
-		kfree(itt);
+		free_pages((unsigned long)itt, get_order(sz));
 		kfree(lpi_map);
 		kfree(col_map);
 		return NULL;
@@ -2322,6 +2353,7 @@ static struct its_device *its_create_device(struct its_node *its, u32 dev_id,
 
 	dev->its = its;
 	dev->itt = itt;
+	dev->itt_sz = sz;
 	dev->nr_ites = nr_ites;
 	dev->event_map.lpi_map = lpi_map;
 	dev->event_map.col_map = col_map;
@@ -2348,7 +2380,7 @@ static void its_free_device(struct its_device *its_dev)
 	raw_spin_lock_irqsave(&its_dev->its->lock, flags);
 	list_del(&its_dev->entry);
 	raw_spin_unlock_irqrestore(&its_dev->its->lock, flags);
-	kfree(its_dev->itt);
+	free_pages((unsigned long)its_dev->itt, get_order(its_dev->itt_sz));
 	kfree(its_dev);
 }
 
@@ -3443,6 +3475,7 @@ static int __init its_probe_one(struct resource *res,
 	u32 val, ctlr;
 	u64 baser, tmp, typer;
 	int err;
+	gfp_t gfp_flags;
 
 	its_base = ioremap(res->start, resource_size(res));
 	if (!its_base) {
@@ -3498,7 +3531,10 @@ static int __init its_probe_one(struct resource *res,
 
 	its->numa_node = numa_node;
 
-	its->cmd_base = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO,
+	gfp_flags = GFP_KERNEL | __GFP_ZERO;
+	if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+		gfp_flags |= GFP_DMA32;
+	its->cmd_base = (void *)__get_free_pages(gfp_flags,
 						get_order(ITS_CMD_QUEUE_SZ));
 	if (!its->cmd_base) {
 		err = -ENOMEM;
@@ -3527,6 +3563,9 @@ static int __init its_probe_one(struct resource *res,
 
 	gits_write_cbaser(baser, its->base + GITS_CBASER);
 	tmp = gits_read_cbaser(its->base + GITS_CBASER);
+
+	if (of_machine_is_compatible("rockchip,rk3568") || of_machine_is_compatible("rockchip,rk3566"))
+		tmp &= ~GITS_CBASER_SHAREABILITY_MASK;
 
 	if ((tmp ^ baser) & GITS_CBASER_SHAREABILITY_MASK) {
 		if (!(tmp & GITS_CBASER_SHAREABILITY_MASK)) {

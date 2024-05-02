@@ -784,10 +784,10 @@ int usb_gadget_deactivate(struct usb_gadget *gadget)
 {
 	int ret = 0;
 
-	if (gadget->deactivated)
+	if (!gadget || gadget->deactivated)
 		goto out;
 
-	if (gadget->connected) {
+	if (gadget->connected && !gadget->uvc_enabled) {
 		ret = usb_gadget_disconnect(gadget);
 		if (ret)
 			goto out;

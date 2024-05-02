@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# Input remotectl driver configuration
+#
+menuconfig GPIO_CONTROL
+	bool "rockchip gpio"
+	default y
+

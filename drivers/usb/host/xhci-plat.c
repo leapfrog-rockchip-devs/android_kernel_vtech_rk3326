@@ -288,6 +288,23 @@ static int xhci_plat_probe(struct platform_device *pdev)
 		if (device_property_read_bool(tmpdev, "quirk-broken-port-ped"))
 			xhci->quirks |= XHCI_BROKEN_PORT_PED;
 
+		if (device_property_read_bool(tmpdev, "xhci-slow-suspend"))
+			xhci->quirks |= XHCI_SLOW_SUSPEND;
+
+		if (device_property_read_bool(tmpdev, "xhci-trb-ent-quirk"))
+			xhci->quirks |= XHCI_TRB_ENT_QUIRK;
+
+		if (device_property_read_bool(tmpdev, "usb3-dis-autosuspend"))
+			xhci->quirks |= XHCI_DIS_AUTOSUSPEND;
+
+		if (device_property_read_bool(tmpdev,
+					      "xhci-warm-reset-on-suspend"))
+			xhci->quirks |= XHCI_WARM_RESET_ON_SUSPEND;
+
+		if (device_property_read_bool(tmpdev,
+					      "xhci-u2-broken-suspend"))
+			xhci->quirks |= XHCI_U2_BROKEN_SUSPEND;
+
 		device_property_read_u32(tmpdev, "imod-interval-ns",
 					 &xhci->imod_interval);
 	}
@@ -303,6 +320,15 @@ static int xhci_plat_probe(struct platform_device *pdev)
 		if (ret)
 			goto put_usb3_hcd;
 		hcd->skip_phy_initialization = 1;
+	}
+
+	xhci->shared_hcd->usb_phy = devm_usb_get_phy(sysdev,
+						     USB_PHY_TYPE_USB3);
+	if (IS_ERR(xhci->shared_hcd->usb_phy)) {
+		ret = PTR_ERR(xhci->shared_hcd->usb_phy);
+		if (ret == -EPROBE_DEFER)
+			goto put_usb3_hcd;
+		xhci->shared_hcd->usb_phy = NULL;
 	}
 
 	ret = usb_add_hcd(hcd, irq, IRQF_SHARED);

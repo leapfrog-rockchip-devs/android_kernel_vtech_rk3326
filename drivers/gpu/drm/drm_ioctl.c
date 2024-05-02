@@ -318,6 +318,8 @@ drm_setclientcap(struct drm_device *dev, void *data, struct drm_file *file_priv)
 			return -EINVAL;
 		file_priv->universal_planes = req->value;
 		break;
+	case DRM_CLIENT_CAP_SHARE_PLANES:
+		break;
 	case DRM_CLIENT_CAP_ATOMIC:
 		if (!drm_core_check_feature(dev, DRIVER_ATOMIC))
 			return -EINVAL;
@@ -521,6 +523,7 @@ int drm_version(struct drm_device *dev, void *data,
  */
 int drm_ioctl_permit(u32 flags, struct drm_file *file_priv)
 {
+#ifndef CONFIG_DRM_IGNORE_IOTCL_PERMIT
 	/* ROOT_ONLY is only for CAP_SYS_ADMIN */
 	if (unlikely((flags & DRM_ROOT_ONLY) && !capable(CAP_SYS_ADMIN)))
 		return -EACCES;
@@ -539,6 +542,7 @@ int drm_ioctl_permit(u32 flags, struct drm_file *file_priv)
 	if (unlikely(!(flags & DRM_RENDER_ALLOW) &&
 		     drm_is_render_client(file_priv)))
 		return -EACCES;
+#endif
 
 	return 0;
 }

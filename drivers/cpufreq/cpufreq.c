@@ -20,6 +20,7 @@
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
 #include <linux/cpufreq_times.h>
+#include <linux/cpu_cooling.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/init.h>
@@ -31,6 +32,10 @@
 #include <linux/syscore_ops.h>
 #include <linux/tick.h>
 #include <trace/events/power.h>
+
+#if IS_ENABLED(CONFIG_ARM_ROCKCHIP_CPUFREQ)
+#include "rockchip-cpufreq.h"
+#endif
 
 static LIST_HEAD(cpufreq_policy_list);
 
@@ -1334,6 +1339,10 @@ static int cpufreq_online(unsigned int cpu)
 	if (cpufreq_driver->ready)
 		cpufreq_driver->ready(policy);
 
+	if (IS_ENABLED(CONFIG_CPU_THERMAL) &&
+	    cpufreq_driver->flags & CPUFREQ_IS_COOLING_DEV)
+		policy->cdev = of_cpufreq_cooling_register(policy);
+
 	pr_debug("initialization complete\n");
 
 	return 0;
@@ -1419,6 +1428,12 @@ static int cpufreq_offline(unsigned int cpu)
 		}
 
 		goto unlock;
+	}
+
+	if (IS_ENABLED(CONFIG_CPU_THERMAL) &&
+	    cpufreq_driver->flags & CPUFREQ_IS_COOLING_DEV) {
+		cpufreq_cooling_unregister(policy->cdev);
+		policy->cdev = NULL;
 	}
 
 	if (cpufreq_driver->stop_cpu)
@@ -1978,6 +1993,9 @@ int __cpufreq_driver_target(struct cpufreq_policy *policy,
 	if (cpufreq_disabled())
 		return -ENODEV;
 
+#ifdef CONFIG_ARM_ROCKCHIP_CPUFREQ
+	target_freq = rockchip_cpufreq_adjust_target(policy->cpu, target_freq);
+#endif
 	/* Make sure that target_freq is within supported range */
 	target_freq = clamp_val(target_freq, policy->min, policy->max);
 
@@ -2297,7 +2315,6 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 		ret = cpufreq_start_governor(policy);
 		if (!ret) {
 			pr_debug("cpufreq: governor change\n");
-			sched_cpufreq_governor_change(policy, old_gov);
 			return 0;
 		}
 		cpufreq_exit_governor(policy);
